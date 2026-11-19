@@ -45,7 +45,9 @@ import { showToast } from '../base/toastState.js'
 import { ApiKeyConfirm, ApiKeyField, useApiKeyEditor } from './ApiKeyField.js'
 import {
   exportSettingsFile,
+  exportSettingsFileEncrypted,
   importSettingsFile,
+  inspectSettingsFile,
   SettingsTransferError,
 } from '../../services/settingsTransfer.js'
 import { closeSettings, useSettingsDialog, type SettingsSection } from './settingsDialogState.js'
@@ -607,72 +609,38 @@ const TtsVoiceSetting = () => {
   )
 }
 
-/** 导出配置（API Key、对象存储等）为 JSON 文件，便于在其他设备恢复 */
+/** 错误文案兜底：非 SettingsTransferError 时带上原始信息，便于排查 */
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+/** 导出配置（API Key、对象存储等）为 JSON；可在弹窗里设置口令加密 */
 const ExportSettings = ({ disabled }: { disabled: boolean }) => {
   const t = useTranslate()
+  const [opened, setOpened] = useState(false)
+  const [passphrase, setPassphrase] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const onExport = () => {
+  const download = async (encrypted: boolean) => {
     setBusy(true)
     try {
-      const { name, blob } = exportSettingsFile()
+      const { name, blob } = encrypted
+        ? await exportSettingsFileEncrypted(passphrase)
+        : exportSettingsFile()
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
       link.download = name
       link.click()
       setTimeout(() => URL.revokeObjectURL(url), 10_000)
-      showToast({ key: 'settingsExportDone' })
-    } catch (error) {
-      showToast({
-        key: 'settingsExportFailed',
-        params: { message: error instanceof Error ? error.message : String(error) },
-        type: 'error',
-      })
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <SettingCell
-      label={t('settingsExportLabel')}
-      description={t('settingsExportDescription')}
-      status={null}
-      action={
-        <Button
-          variant="outlined"
-          size="m"
-          className={styles.cellButton}
-          disabled={disabled || busy}
-          onClick={onExport}
-        >
-          <IconDownloadOutline16 />
-          {t('exportAllDownload')}
-        </Button>
-      }
-    />
-  )
-}
-
-/** 导入配置文件：覆盖本机 API Key、对象存储配置与其他设置 */
-const ImportSettings = ({ disabled }: { disabled: boolean }) => {
-  const t = useTranslate()
-  const inputRef = useRef<HTMLInputElement>(null)
-  const [busy, setBusy] = useState(false)
-
-  const onSelect = async (file: File) => {
-    setBusy(true)
-    try {
-      await importSettingsFile(file)
-      showToast({ key: 'settingsImportDone' })
+      showToast({ key: encrypted ? 'settingsExportDoneEncrypted' : 'settingsExportDone' })
+      setOpened(false)
+      setPassphrase('')
     } catch (error) {
       if (error instanceof SettingsTransferError) {
         showToast({ ...error.localMessage, type: 'error' })
       } else {
         showToast({
-          key: 'settingsImportFailed',
-          params: { message: error instanceof Error ? error.message : String(error) },
+          key: 'settingsExportFailed',
+          params: { message: messageOf(error) },
           type: 'error',
         })
       }
@@ -682,38 +650,188 @@ const ImportSettings = ({ disabled }: { disabled: boolean }) => {
   }
 
   return (
-    <SettingCell
-      label={t('settingsImportLabel')}
-      description={t('settingsImportDescription')}
-      status={null}
-      action={
-        <>
+    <>
+      <SettingCell
+        label={t('settingsExportLabel')}
+        description={t('settingsExportDescription')}
+        status={null}
+        action={
           <Button
             variant="outlined"
             size="m"
-            className={clsx(styles.cellButton, styles.uploadButton)}
+            className={styles.cellButton}
             disabled={disabled || busy}
-            onClick={() => inputRef.current?.click()}
-          >
-            <IconUploadOutline14 />
-            {t('upload')}
-          </Button>
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".json,application/json"
-            hidden
-            onChange={(event) => {
-              const file = event.target.files?.[0]
-              event.target.value = ''
-              if (file) {
-                void onSelect(file)
-              }
+            onClick={() => {
+              setPassphrase('')
+              setOpened(true)
             }}
-          />
-        </>
+          >
+            <IconDownloadOutline16 />
+            {t('exportAllDownload')}
+          </Button>
+        }
+      />
+      {opened ? (
+        <Modal
+          title={t('settingsExportLabel')}
+          className={styles.importConfirm}
+          onClose={() => {
+            if (!busy) {
+              setOpened(false)
+            }
+          }}
+          footer={
+            <div className={styles.deleteActions} aria-busy={busy}>
+              <Button variant="outlined" disabled={busy} onClick={() => setOpened(false)}>
+                {t('cancel')}
+              </Button>
+              <Button variant="outlined" disabled={busy} onClick={() => void download(false)}>
+                {t('settingsExportPlain')}
+              </Button>
+              <Button
+                disabled={busy || passphrase.trim() === ''}
+                onClick={() => void download(true)}
+              >
+                {t('settingsExportEncrypted')}
+              </Button>
+            </div>
+          }
+        >
+          <div className={styles.importConfirmText}>{t('settingsExportHint')}</div>
+          <label className={styles.syncField}>
+            <span className={styles.label}>{t('settingsExportPassword')}</span>
+            <input
+              type="password"
+              className={styles.syncInput}
+              value={passphrase}
+              placeholder={t('settingsExportPasswordPlaceholder')}
+              autoComplete="new-password"
+              onChange={(event) => setPassphrase(event.target.value)}
+            />
+          </label>
+        </Modal>
+      ) : null}
+    </>
+  )
+}
+
+/** 导入配置：明文直接应用，加密文件先索要口令再解密 */
+const ImportSettings = ({ disabled }: { disabled: boolean }) => {
+  const t = useTranslate()
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [pending, setPending] = useState<File | null>(null)
+  const [passphrase, setPassphrase] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const apply = async (file: File, secret = '') => {
+    setBusy(true)
+    try {
+      await importSettingsFile(file, secret)
+      showToast({ key: 'settingsImportDone' })
+      setPending(null)
+      setPassphrase('')
+    } catch (error) {
+      // 口令错误时保留弹窗，方便用户重试
+      if (error instanceof SettingsTransferError) {
+        showToast({ ...error.localMessage, type: 'error' })
+      } else {
+        showToast({
+          key: 'settingsImportFailed',
+          params: { message: messageOf(error) },
+          type: 'error',
+        })
       }
-    />
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const onSelect = async (file: File) => {
+    const kind = await inspectSettingsFile(file)
+    if (kind === 'invalid') {
+      showToast({ key: 'settingsImportInvalid', type: 'error' })
+      return
+    }
+    if (kind === 'encrypted') {
+      setPassphrase('')
+      setPending(file)
+      return
+    }
+    await apply(file)
+  }
+
+  return (
+    <>
+      <SettingCell
+        label={t('settingsImportLabel')}
+        description={t('settingsImportDescription')}
+        status={null}
+        action={
+          <>
+            <Button
+              variant="outlined"
+              size="m"
+              className={clsx(styles.cellButton, styles.uploadButton)}
+              disabled={disabled || busy}
+              onClick={() => inputRef.current?.click()}
+            >
+              <IconUploadOutline14 />
+              {t('upload')}
+            </Button>
+            <input
+              ref={inputRef}
+              type="file"
+              accept=".json,application/json"
+              hidden
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                event.target.value = ''
+                if (file) {
+                  void onSelect(file)
+                }
+              }}
+            />
+          </>
+        }
+      />
+      {pending ? (
+        <Modal
+          title={t('settingsImportPasswordTitle')}
+          className={styles.importConfirm}
+          onClose={() => {
+            if (!busy) {
+              setPending(null)
+            }
+          }}
+          footer={
+            <div className={styles.deleteActions} aria-busy={busy}>
+              <Button variant="outlined" disabled={busy} onClick={() => setPending(null)}>
+                {t('cancel')}
+              </Button>
+              <Button
+                disabled={busy || passphrase === ''}
+                onClick={() => void apply(pending, passphrase)}
+              >
+                {t('confirm')}
+              </Button>
+            </div>
+          }
+        >
+          <label className={styles.syncField}>
+            <span className={styles.label}>{t('settingsExportPassword')}</span>
+            <input
+              type="password"
+              className={styles.syncInput}
+              value={passphrase}
+              placeholder={t('settingsImportPasswordPlaceholder')}
+              autoComplete="off"
+              autoFocus
+              onChange={(event) => setPassphrase(event.target.value)}
+            />
+          </label>
+        </Modal>
+      ) : null}
+    </>
   )
 }
 

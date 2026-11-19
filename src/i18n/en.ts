@@ -188,6 +188,20 @@ export const en = {
   settingsImportDone: 'Configuration imported',
   settingsImportFailed: 'Failed to import configuration: {message}',
   settingsImportInvalid: 'Not a valid configuration file',
+  settingsExportHint:
+    'Setting a passphrase encrypts the configuration file with AES-GCM. Leave it empty to export plain text (contains the API key and object storage secrets; not recommended).',
+  settingsExportPassword: 'Passphrase',
+  settingsExportPasswordPlaceholder: 'Used to encrypt this configuration file',
+  settingsExportPlain: 'Export without encryption',
+  settingsExportEncrypted: 'Export encrypted',
+  settingsExportDoneEncrypted:
+    'Configuration exported encrypted (the same passphrase is required to import)',
+  settingsImportPasswordTitle: 'This configuration file is encrypted',
+  settingsImportPasswordPlaceholder: 'Enter the passphrase used when exporting',
+  settingsDecryptFailed: 'Wrong passphrase or corrupted file',
+  settingsCryptoUnavailable:
+    'Encryption is unavailable in this environment (requires a secure context such as HTTPS or localhost)',
+  settingsPassphraseRequired: 'Please enter a passphrase',
   deleteAllSessions: 'Delete all chats',
   deleteAllSessionsModalTitle: 'Once deleted, all chats will be cleared and cannot be recovered.',
   deleteAllSessionsModalDescription:

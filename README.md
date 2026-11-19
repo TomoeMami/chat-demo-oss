@@ -45,7 +45,14 @@ History import and export in Settings use ZIP archives. After confirmation and s
 
 ### Configuration export and import
 
-Settings → Data → Export configuration writes `chat-demo-config-<date>.json` containing the API key, the object storage (sync) configuration, and local settings such as language, theme and the DeepThink/Search switches. Pick it in "Import configuration" on a new device to restore everything at once; importing overwrites the current configuration. The file contains the API key and object storage credentials in plain text, so keep it safe.
+Settings → Data → Export configuration writes a JSON file containing the API key, the object storage (sync) configuration, and local settings such as language, theme and the DeepThink/Search switches. Pick it in "Import configuration" on a new device to restore everything at once; importing overwrites the current configuration.
+
+The export dialog accepts an optional **passphrase**:
+
+- **With a passphrase**: the file is encrypted with AES-GCM-256 using a PBKDF2(SHA-256, 310k iterations) key, named `chat-demo-config-<date>.enc.json`. It holds only salt, IV and ciphertext — no plain-text secrets. The same passphrase is required to import.
+- **Empty**: a plain-text file (API key and object storage credentials included) for convenience; keep it safe.
+
+The passphrase is never stored locally, uploaded, or included in the file. When WebCrypto is unavailable (non-secure context), encrypted export reports an error instead of silently falling back. Import detects encrypted files and asks for the passphrase.
 
 ### Optional cross-device sync
 

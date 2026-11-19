@@ -33,6 +33,20 @@ declare const styles: {
   readonly "importConfirmText": string;
   readonly "deleteConfirm": string;
   readonly "deleteActions": string;
+  readonly "syncEnableRow": string;
+  readonly "syncCheckbox": string;
+  readonly "syncEnableText": string;
+  readonly "syncFields": string;
+  readonly "syncField": string;
+  readonly "syncFieldRow": string;
+  readonly "syncInput": string;
+  readonly "syncHint": string;
+  readonly "syncHintError": string;
+  readonly "syncActions": string;
+  readonly "syncStatus": string;
+  readonly "syncStats": string;
+  readonly "syncErrorDetail": string;
+  readonly "syncBackendRow": string;
+  readonly "syncBackendSelect": string;
 };
 export = styles;
-

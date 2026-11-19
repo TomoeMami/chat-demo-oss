@@ -34,12 +34,25 @@ pnpm build
 - 附件上传、粘贴与拖拽，语音输入和回复朗读；移动端录音时输入框首行显示实时频谱。
 - Markdown、代码高亮、KaTeX 公式和 Mermaid 图表。
 - 简体中文与英文、浅色与深色主题、移动端布局、位置设置、历史导入导出。
+- 可选：把历史同步到自己的 S3 兼容对象存储，多个浏览器与设备间保持一致。
 
 ## 数据
 
 API Key 和设置保存在浏览器 localStorage，会话及附件原件保存在 IndexedDB，本地数据按浏览器用户配置和站点源（origin）隔离。发送对话、上传附件和使用语音功能时，相应内容会提交给配置的 API 服务。
 
 设置中的历史导入导出使用 ZIP 格式。导入会在确认并校验成功后替换全部本地会话和附件；导出包含会话与本地可用的图片原件，不包含 API Key、设置或非图片附件原件。格式与保留范围见[历史导入导出](src/services/chat/history/README.md)。
+
+### 可选：跨设备同步
+
+设置 → 同步 可以把会话复制到用户自己的 S3 兼容对象存储（Cloudflare R2、Backblaze B2、AWS S3、MinIO 等）或腾讯云 COS。需要填写 endpoint、bucket、region、Access Key、Secret Key 与可选的路径前缀，页面需通过 HTTPS 访问该桶。
+
+腾讯云 COS：存储类型选「腾讯云 COS」，桶名必须带 APPID（如 `chat-1250000000`），地域填真实地域（如 `ap-guangzhou`），endpoint 可留空（自动使用 `https://cos.<region>.myqcloud.com`）。2024-01-01 之后创建的 COS 桶只支持 virtual-hosted-style 寻址，本适配器按此实现；访问密钥填控制台的 SecretId / SecretKey。需要在 COS 控制台「安全管理 → 跨域访问」配置 CORS：Methods 选 `GET/PUT/DELETE/HEAD`，Allow-Headers 建议填 `*`。
+
+- 远端结构：`<prefix>/v1/devices/<device-id>/log/<seq>.json.gz`（每个标签页一条只追加的日志），附件原件在 `<prefix>/v1/blobs/<file-id>`。内容为 gzip 压缩的 JSON，**不加密**；桶的访问控制与生命周期策略由使用者负责。
+- 需要给桶配置 CORS：允许本站来源的 `GET`、`PUT`、`DELETE`、`HEAD` 以及 `authorization`、`x-amz-date`、`x-amz-content-sha256` 头（`AllowedHeaders: ["*"]` 最省事）。所有请求都用 SigV4 签名，因此必然有预检；若还要用 `file://` 打开产物，`AllowedOrigins` 需为 `["*"]`。
+- 每个标签页只写自己的日志前缀；其他设备拉取未见过的日志后合并，删除通过 tombstone 传播。消息按 id 取并集，两台设备各自新增的回复都会保留。
+- 附件原件默认不同步；开启「同步附件」后同时上传本地原件（单文件上限 20MB，超出只同步元数据）。
+- API Key 与其他设置不参与同步，仍只保存在当前浏览器。
 
 设置 → 数据管理 → 删除所有对话，会在确认后清空全部本地会话、附件原件和未发送的草稿，停止正在生成的回复并回到新对话。API Key 和其他设置保留，已上传到 API 服务的文件不受影响。
 

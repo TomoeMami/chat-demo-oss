@@ -110,6 +110,8 @@ export type Session = {
   title: string
   createdAt: number
   updatedAt: number
+  /** 标题最近一次修改时间；只用于跨设备同步时判定标题的新旧，不影响列表排序 */
+  titleUpdatedAt?: number
   /** 包含所有分支的消息，按创建顺序存储。 */
   messages: Message[]
   /** undefined 表示线性消息列表；null 表示空会话。 */

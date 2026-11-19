@@ -28,6 +28,16 @@ import {
   type ThemePreference,
 } from '../../services/settings.js'
 import { useTranslate, type TranslationKey, type TranslationMessage } from '../../i18n/index.js'
+import { readSyncConfig, writeSyncConfig } from '../../services/sync/config.js'
+import { syncNow, testSyncConfig } from '../../services/sync/engine.js'
+import { useSyncStatus } from '../../services/sync/state.js'
+import {
+  SyncError,
+  type SyncBackend,
+  type SyncConfig,
+  type SyncErrorKind,
+  type SyncPhase,
+} from '../../services/sync/types.js'
 import { Button } from '../base/Button.js'
 import { Modal } from '../base/Modal.js'
 import { Select } from '../base/Select.js'
@@ -37,7 +47,8 @@ import { closeSettings, useSettingsDialog, type SettingsSection } from './settin
 import styles from './Settings.module.css'
 
 /**
- * 设置弹窗：分「通用设置」（主题、语言、朗读音色、位置）与「数据管理」（API Key、导入、导出、删除）。
+ * 设置弹窗：分「通用设置」（主题、语言、朗读音色、位置）、「数据管理」（API Key、导入、导出、
+ * 删除）与「同步」（S3 兼容对象存储）。
  * 桌面端为居中弹窗、左侧导航；移动端为底部弹层、导航横排在内容上方
  */
 export const SettingsDialog = () => {
@@ -52,6 +63,7 @@ const sections: { value: SettingsSection; label: TranslationKey; icon: ReactNode
     icon: <IconSettingsOutline16 />,
   },
   { value: 'data', label: 'settingDialogAsideDataOptionLabel', icon: <IconDataOutline16 /> },
+  { value: 'sync', label: 'settingsSync', icon: <IconDataOutline16 /> },
 ]
 
 const SettingsContent = () => {
@@ -65,6 +77,46 @@ const SettingsContent = () => {
   const historyDelete = useHistoryDelete()
   const replacingHistory = useChatStore((state) => state.importingHistory)
   const historyBusy = historyImport.busy || historyDelete.busy || replacingHistory
+  // 分组内容必须显式分支：新增分组不能落进数据管理分支
+  const sectionContent = (() => {
+    switch (section) {
+      case 'general':
+        return (
+          <>
+            <ThemeSetting />
+            <LocaleSetting />
+            <TtsVoiceSetting />
+            <LocationSetting />
+          </>
+        )
+      case 'data':
+        return (
+          <>
+            <ApiKeyField editor={apiKeyEditor} />
+            <ImportHistory historyImport={historyImport} disabled={historyBusy} />
+            <ExportHistory disabled={historyBusy} />
+            <SettingCell
+              label={t('deleteAllSessions')}
+              status={null}
+              action={
+                <Button
+                  variant="dangerOutlined"
+                  size="m"
+                  className={styles.cellButton}
+                  disabled={historyBusy}
+                  onClick={historyDelete.open}
+                >
+                  {t('delete')}
+                </Button>
+              }
+            />
+            {isMobile ? <ApiKeyConfirm editor={apiKeyEditor} /> : null}
+          </>
+        )
+      case 'sync':
+        return <SyncSetting />
+    }
+  })()
   return (
     <>
       <Modal
@@ -94,40 +146,274 @@ const SettingsContent = () => {
           ))}
         </div>
         <div role="tabpanel" className={styles.content}>
-          {section === 'general' ? (
-            <>
-              <ThemeSetting />
-              <LocaleSetting />
-              <TtsVoiceSetting />
-              <LocationSetting />
-            </>
-          ) : (
-            <>
-              <ApiKeyField editor={apiKeyEditor} />
-              <ImportHistory historyImport={historyImport} disabled={historyBusy} />
-              <ExportHistory disabled={historyBusy} />
-              <SettingCell
-                label={t('deleteAllSessions')}
-                status={null}
-                action={
-                  <Button
-                    variant="dangerOutlined"
-                    size="m"
-                    className={styles.cellButton}
-                    disabled={historyBusy}
-                    onClick={historyDelete.open}
-                  >
-                    {t('delete')}
-                  </Button>
-                }
-              />
-              {isMobile ? <ApiKeyConfirm editor={apiKeyEditor} /> : null}
-            </>
-          )}
+          {sectionContent}
         </div>
       </Modal>
       {historyImport.file ? <ImportConfirm historyImport={historyImport} /> : null}
       {historyDelete.opened ? <DeleteAllConfirm historyDelete={historyDelete} /> : null}
+    </>
+  )
+}
+
+/** 同步错误分类 → 提示文案；未知错误（如占位引擎的裸 Error）用通用失败文案。 */
+const syncErrorKeys: Record<SyncErrorKind, TranslationKey> = {
+  config: 'syncErrorConfig',
+  auth: 'syncErrorAuth',
+  cors: 'syncErrorCors',
+  network: 'syncErrorNetwork',
+  server: 'syncErrorServer',
+  protocol: 'syncErrorProtocol',
+}
+
+const syncErrorMessageKey = (error: unknown): TranslationKey =>
+  error instanceof SyncError ? syncErrorKeys[error.kind] : 'syncTestFailed'
+
+/** 状态区只展示进行中与空闲的文案；出错时改由下方错误提示说明。 */
+const syncPhaseKeys: Record<SyncPhase, TranslationKey | null> = {
+  disabled: null,
+  idle: 'syncIdle',
+  pulling: 'syncPulling',
+  pushing: 'syncPushing',
+  error: null,
+}
+
+const formatSyncTime = (at: number, locale: string): string =>
+  new Date(at).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' })
+
+/**
+ * 同步分组：S3 兼容对象存储与腾讯云 COS 的配置、状态与操作。
+ * 输入变更立即写回 localStorage（与 API Key 一样只在本浏览器生效），不设「保存」按钮。
+ */
+const SyncSetting = () => {
+  const t = useTranslate()
+  const locale = useSettings((state) => state.locale)
+  const status = useSyncStatus()
+  const [config, setConfig] = useState(readSyncConfig)
+  const [testing, setTesting] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+
+  const update = (patch: Partial<SyncConfig>) => {
+    const next = { ...config, ...patch }
+    setConfig(next)
+    writeSyncConfig(next)
+  }
+
+  const backendOptions: { value: SyncBackend; label: string }[] = [
+    { value: 's3', label: t('syncBackendS3') },
+    { value: 'cos', label: t('syncBackendCos') },
+  ]
+
+  const test = async () => {
+    if (testing) {
+      return
+    }
+    setTesting(true)
+    try {
+      await testSyncConfig(readSyncConfig())
+      showToast({ key: 'syncTestOk' })
+    } catch (error) {
+      showToast({ key: syncErrorMessageKey(error), type: 'error' })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const runSync = async () => {
+    if (syncing) {
+      return
+    }
+    setSyncing(true)
+    try {
+      await syncNow()
+    } catch (error) {
+      showToast({ key: syncErrorMessageKey(error), type: 'error' })
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const cos = config.backend === 'cos'
+  const endpoint = config.endpoint.trim()
+  const endpointInvalid = endpoint !== '' && !endpoint.startsWith('https://')
+  const phaseKey = syncPhaseKeys[status.phase]
+  const syncLabel = syncing
+    ? status.phase === 'pulling'
+      ? t('syncPulling')
+      : t('syncPushing')
+    : t('syncNow')
+
+  return (
+    <>
+      <div className={styles.cell}>
+        <div className={styles.description}>{t('syncIntro')}</div>
+        <label className={styles.syncEnableRow}>
+          <input
+            type="checkbox"
+            className={styles.syncCheckbox}
+            checked={config.enabled}
+            onChange={(event) => update({ enabled: event.target.checked })}
+          />
+          {t('syncEnable')}
+        </label>
+      </div>
+      <div className={styles.cell}>
+        <div className={styles.syncFields}>
+          <div className={styles.syncBackendRow}>
+            <span className={styles.label}>{t('syncBackend')}</span>
+            <Select
+              ariaLabel={t('syncBackend')}
+              className={styles.syncBackendSelect}
+              value={config.backend}
+              options={backendOptions}
+              onChange={(value) => {
+                // 腾讯云 COS 必须用真实地域：沿用 S3/R2 的 auto 会让签名被拒，切换时给一个可用默认值
+                const region =
+                  value === 'cos' &&
+                  (config.region.trim() === '' || config.region.trim() === 'auto')
+                    ? 'ap-guangzhou'
+                    : undefined
+                update(region === undefined ? { backend: value } : { backend: value, region })
+              }}
+            />
+          </div>
+          <label className={styles.syncField}>
+            <span className={styles.label}>
+              {t('syncEndpoint')}
+              {cos ? t('syncCosEndpointOptional') : null}
+            </span>
+            <input
+              type="text"
+              className={styles.syncInput}
+              value={config.endpoint}
+              placeholder={
+                cos ? 'https://cos.ap-guangzhou.myqcloud.com' : t('syncEndpointPlaceholder')
+              }
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => update({ endpoint: event.target.value })}
+            />
+            {cos ? <span className={styles.syncHint}>{t('syncCosEndpointHint')}</span> : null}
+          </label>
+          {endpointInvalid ? (
+            <div className={styles.syncHintError}>{t('syncHttpsRequired')}</div>
+          ) : null}
+          <div className={styles.syncFieldRow}>
+            <label className={styles.syncField}>
+              <span className={styles.label}>{t('syncBucket')}</span>
+              <input
+                type="text"
+                className={styles.syncInput}
+                value={config.bucket}
+                placeholder={t('syncBucketPlaceholder')}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => update({ bucket: event.target.value })}
+              />
+              {cos ? <span className={styles.syncHint}>{t('syncCosBucketHint')}</span> : null}
+            </label>
+            <label className={styles.syncField}>
+              <span className={styles.label}>{t('syncRegion')}</span>
+              <input
+                type="text"
+                className={styles.syncInput}
+                value={config.region}
+                placeholder={cos ? 'ap-guangzhou' : t('syncRegionPlaceholder')}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => update({ region: event.target.value })}
+              />
+              {cos ? <span className={styles.syncHint}>{t('syncCosRegionHint')}</span> : null}
+            </label>
+          </div>
+          <label className={styles.syncField}>
+            <span className={styles.label}>{t('syncAccessKey')}</span>
+            <input
+              type="text"
+              className={styles.syncInput}
+              value={config.accessKeyId}
+              placeholder={t('syncAccessKeyPlaceholder')}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => update({ accessKeyId: event.target.value })}
+            />
+          </label>
+          <label className={styles.syncField}>
+            <span className={styles.label}>{t('syncSecretKey')}</span>
+            <input
+              type="password"
+              className={styles.syncInput}
+              value={config.secretAccessKey}
+              placeholder={t('syncSecretKeyPlaceholder')}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => update({ secretAccessKey: event.target.value })}
+            />
+          </label>
+          {cos ? <span className={styles.syncHint}>{t('syncCosCredentialHint')}</span> : null}
+          <label className={styles.syncField}>
+            <span className={styles.label}>{t('syncPrefix')}</span>
+            <input
+              type="text"
+              className={styles.syncInput}
+              value={config.prefix}
+              placeholder={t('syncPrefixPlaceholder')}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => update({ prefix: event.target.value })}
+            />
+          </label>
+          <label className={styles.syncEnableRow}>
+            <input
+              type="checkbox"
+              className={styles.syncCheckbox}
+              checked={config.syncAttachments}
+              onChange={(event) => update({ syncAttachments: event.target.checked })}
+            />
+            <span className={styles.syncEnableText}>
+              {t('syncAttachments')}
+              <span className={styles.syncHint}>{t('syncAttachmentsHint')}</span>
+            </span>
+          </label>
+        </div>
+      </div>
+      <div className={styles.cell}>
+        <div className={styles.syncActions}>
+          <Button
+            variant="outlined"
+            size="m"
+            disabled={testing || syncing}
+            onClick={() => void test()}
+          >
+            {testing ? t('syncTesting') : t('syncTest')}
+          </Button>
+          <Button
+            size="m"
+            disabled={!config.enabled || testing || syncing}
+            onClick={() => void runSync()}
+          >
+            {syncLabel}
+          </Button>
+        </div>
+        <div className={styles.syncStatus}>
+          <div className={styles.syncStats}>
+            {phaseKey ? <span>{t(phaseKey)}</span> : null}
+            <span>
+              {status.lastSyncedAt === null
+                ? t('syncNeverSynced')
+                : t('syncLastSynced', { time: formatSyncTime(status.lastSyncedAt, locale) })}
+            </span>
+            <span>{t('syncPendingCount', { count: status.pending })}</span>
+          </div>
+          {status.lastError ? (
+            <div className={styles.error} title={status.lastError.message}>
+              {t(syncErrorKeys[status.lastError.kind])}
+              {status.lastError.kind === 'cors' ? (
+                <div className={styles.syncErrorDetail}>{t('syncCorsHint')}</div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </div>
     </>
   )
 }

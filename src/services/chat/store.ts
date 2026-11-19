@@ -465,7 +465,7 @@ export const renameSession = (id: string, title: string) => {
     titleRequests.delete(controller)
   }
   if (getSession(id)) {
-    updateSession(id, (session) => ({ ...session, title }))
+    updateSession(id, (session) => ({ ...session, title, titleUpdatedAt: Date.now() }))
     persist(id)
   } else {
     set((state) => ({
@@ -1091,4 +1091,67 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
     }))
     persist(sessionId)
   }
+}
+
+/** 会话是否正在被本地改动（生成中、待保存、删除中）；此时同步结果延后应用，避免互相覆盖。 */
+export const isSessionBusy = (id: string): boolean =>
+  get().importingHistory ||
+  Object.hasOwn(get().streaming, id) ||
+  unsavedSessions.has(id) ||
+  deletingSessions.has(id)
+
+/**
+ * 应用远端同步结果：更新列表摘要，淘汰对应详情缓存，让下次读取拿到 IndexedDB 里合并后的内容。
+ * 正在生成或待保存的会话跳过；返回 false 表示本轮没有任何可应用的内容。
+ */
+export const applySyncResults = (updated: SessionSummary[], deleted: string[]): boolean => {
+  if (get().importingHistory) {
+    return false
+  }
+  const streaming = get().streaming
+  const busy = (id: string) =>
+    Object.hasOwn(streaming, id) || unsavedSessions.has(id) || deletingSessions.has(id)
+  const changed = updated.filter((summary) => !busy(summary.id))
+  const removed = new Set(deleted.filter((id) => !busy(id)))
+  if (changed.length === 0 && removed.size === 0) {
+    return false
+  }
+  const changedById = new Map(changed.map((summary) => [summary.id, summary]))
+  for (const id of changedById.keys()) {
+    sessionLoads.delete(id)
+  }
+  for (const id of removed) {
+    sessionLoads.delete(id)
+    sessionAccess.delete(id)
+  }
+  set((state) => {
+    const sessions = state.sessions
+      .filter((session) => !removed.has(session.id))
+      .map((session) => changedById.get(session.id) ?? session)
+    for (const summary of changed) {
+      if (!sessions.some((session) => session.id === summary.id)) {
+        sessions.push(summary)
+      }
+    }
+    const keep = (record: Record<string, boolean>) =>
+      Object.fromEntries(
+        Object.entries(record).filter(([id]) => !removed.has(id) && !changedById.has(id))
+      )
+    return {
+      sessions: sortSessions(sessions),
+      sessionCache: Object.fromEntries(
+        Object.entries(state.sessionCache).filter(
+          ([id]) => !removed.has(id) && !changedById.has(id)
+        )
+      ),
+      sessionLoadErrors: keep(state.sessionLoadErrors),
+      sessionSaveErrors: keep(state.sessionSaveErrors),
+      activeId: state.activeId !== null && removed.has(state.activeId) ? null : state.activeId,
+    }
+  })
+  const { activeId } = get()
+  if (activeId !== null && changedById.has(activeId)) {
+    void ensureSessionLoaded(activeId)
+  }
+  return true
 }

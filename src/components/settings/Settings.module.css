@@ -440,3 +440,136 @@
     max-width: 100%;
   }
 }
+
+.syncEnableRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 22px;
+  cursor: pointer;
+}
+
+.syncCheckbox {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin: 3px 0 0;
+  accent-color: var(--dsw-alias-brand-primary);
+  cursor: pointer;
+}
+
+.syncEnableText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.syncFields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.syncField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.syncFieldRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.syncInput {
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--ds-control-height-m);
+  padding: 0 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background-color: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  outline: none;
+  transition: border-color var(--ds-transition-duration) var(--ds-ease-in-out);
+
+  &::placeholder {
+    color: var(--dsw-alias-label-caption);
+  }
+
+  &:focus {
+    border-color: var(--dsw-alias-brand-primary);
+  }
+}
+
+.syncHint {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.syncHintError {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.syncActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.syncStatus {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.syncStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.syncErrorDetail {
+  color: var(--dsw-alias-label-caption);
+  font-family: var(--ds-font-family-code);
+  overflow-wrap: anywhere;
+}
+
+@media not all and (min-width: 768px) {
+  .syncFieldRow {
+    grid-template-columns: 1fr;
+  }
+
+  .syncActions > button {
+    flex: 1 1 0;
+    min-height: 44px;
+  }
+}
+
+.syncBackendRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.syncBackendSelect {
+  flex-shrink: 0;
+  min-width: 168px;
+}

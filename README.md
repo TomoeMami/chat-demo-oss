@@ -34,13 +34,18 @@ The output is written to `dist/`. Deploy it to a static web server or open `dist
 - Upload, paste, or drag and drop attachments; use voice input and read replies aloud. A live audio spectrum appears in the first row of the input area while recording on mobile.
 - Markdown, syntax highlighting, KaTeX math, and Mermaid diagrams.
 - Simplified Chinese and English, light and dark themes, mobile layouts, location settings, and chat history import and export.
-- Optional history sync to your own S3-compatible object storage, so conversations stay consistent across browsers and devices.
+- Optional history sync to your own S3-compatible object storage or Tencent Cloud COS, so conversations stay consistent across browsers and devices.
+- Configuration export/import: save the API key, object storage and UI settings as JSON and restore them on a new device in one step.
 
 ## Data and storage
 
 Your API key and settings are stored in the browser's localStorage. Conversations and original attachments are stored in IndexedDB. Local data is isolated by browser profile and site origin. Sending messages, uploading attachments, and using speech features sends the relevant content to the configured API service.
 
 History import and export in Settings use ZIP archives. After confirmation and successful validation, importing replaces all local conversations and attachments. Exports include conversations and locally available original images, but exclude API keys, settings, and original non-image attachments. See the [history import/export documentation (Chinese)](src/services/chat/history/README.md) for the archive format and preservation details.
+
+### Configuration export and import
+
+Settings → Data → Export configuration writes `chat-demo-config-<date>.json` containing the API key, the object storage (sync) configuration, and local settings such as language, theme and the DeepThink/Search switches. Pick it in "Import configuration" on a new device to restore everything at once; importing overwrites the current configuration. The file contains the API key and object storage credentials in plain text, so keep it safe.
 
 ### Optional cross-device sync
 

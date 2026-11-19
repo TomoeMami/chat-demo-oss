@@ -43,6 +43,11 @@ import { Modal } from '../base/Modal.js'
 import { Select } from '../base/Select.js'
 import { showToast } from '../base/toastState.js'
 import { ApiKeyConfirm, ApiKeyField, useApiKeyEditor } from './ApiKeyField.js'
+import {
+  exportSettingsFile,
+  importSettingsFile,
+  SettingsTransferError,
+} from '../../services/settingsTransfer.js'
 import { closeSettings, useSettingsDialog, type SettingsSection } from './settingsDialogState.js'
 import styles from './Settings.module.css'
 
@@ -95,6 +100,8 @@ const SettingsContent = () => {
             <ApiKeyField editor={apiKeyEditor} />
             <ImportHistory historyImport={historyImport} disabled={historyBusy} />
             <ExportHistory disabled={historyBusy} />
+            <ExportSettings disabled={historyBusy} />
+            <ImportSettings disabled={historyBusy} />
             <SettingCell
               label={t('deleteAllSessions')}
               status={null}
@@ -595,6 +602,116 @@ const TtsVoiceSetting = () => {
           ]}
           onChange={setTtsVoice}
         />
+      }
+    />
+  )
+}
+
+/** 导出配置（API Key、对象存储等）为 JSON 文件，便于在其他设备恢复 */
+const ExportSettings = ({ disabled }: { disabled: boolean }) => {
+  const t = useTranslate()
+  const [busy, setBusy] = useState(false)
+
+  const onExport = () => {
+    setBusy(true)
+    try {
+      const { name, blob } = exportSettingsFile()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = name
+      link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 10_000)
+      showToast({ key: 'settingsExportDone' })
+    } catch (error) {
+      showToast({
+        key: 'settingsExportFailed',
+        params: { message: error instanceof Error ? error.message : String(error) },
+        type: 'error',
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <SettingCell
+      label={t('settingsExportLabel')}
+      description={t('settingsExportDescription')}
+      status={null}
+      action={
+        <Button
+          variant="outlined"
+          size="m"
+          className={styles.cellButton}
+          disabled={disabled || busy}
+          onClick={onExport}
+        >
+          <IconDownloadOutline16 />
+          {t('exportAllDownload')}
+        </Button>
+      }
+    />
+  )
+}
+
+/** 导入配置文件：覆盖本机 API Key、对象存储配置与其他设置 */
+const ImportSettings = ({ disabled }: { disabled: boolean }) => {
+  const t = useTranslate()
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [busy, setBusy] = useState(false)
+
+  const onSelect = async (file: File) => {
+    setBusy(true)
+    try {
+      await importSettingsFile(file)
+      showToast({ key: 'settingsImportDone' })
+    } catch (error) {
+      if (error instanceof SettingsTransferError) {
+        showToast({ ...error.localMessage, type: 'error' })
+      } else {
+        showToast({
+          key: 'settingsImportFailed',
+          params: { message: error instanceof Error ? error.message : String(error) },
+          type: 'error',
+        })
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <SettingCell
+      label={t('settingsImportLabel')}
+      description={t('settingsImportDescription')}
+      status={null}
+      action={
+        <>
+          <Button
+            variant="outlined"
+            size="m"
+            className={clsx(styles.cellButton, styles.uploadButton)}
+            disabled={disabled || busy}
+            onClick={() => inputRef.current?.click()}
+          >
+            <IconUploadOutline14 />
+            {t('upload')}
+          </Button>
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".json,application/json"
+            hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              event.target.value = ''
+              if (file) {
+                void onSelect(file)
+              }
+            }}
+          />
+        </>
       }
     />
   )

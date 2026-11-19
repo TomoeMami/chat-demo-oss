@@ -140,6 +140,8 @@
 
 ## 6. 用户需要做什么（配置说明）
 
+> 省事做法：在已配置好的设备上「设置 → 数据管理 → 导出配置」，把 `chat-demo-config-*.json` 拷到新设备再「导入配置」，API Key、对象存储与界面设置会一次填好，导入后还会自动拉取一次历史。文件含明文密钥，注意保管。
+
 通用 S3 兼容（R2 / B2 / AWS S3 / MinIO / OSS）：
 
 1. 建桶，拿到 endpoint、region、Access Key、Secret Key；

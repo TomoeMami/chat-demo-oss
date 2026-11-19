@@ -14,7 +14,7 @@ export const en = {
     'Chats or attachments have not been saved locally. Retry before closing this page.',
   sessionDeleteFailed: 'Unable to delete this chat. Please try again.',
   settings: 'Settings',
-  appName: 'API usage demo',
+  appName: 'ChatDemoOSS',
   deleteSessionModalContentTitle: 'Delete chat?',
   deleteSessionWithFilesDescription:
     'This chat and its uploaded files will be permanently deleted and cannot be recovered. Delete this chat?',
@@ -177,6 +177,17 @@ export const en = {
   historyExportDescription:
     'Includes all chat history and locally stored images. Other attachments retain file details only. Your API Key is not included.',
   exportAllDownload: 'Download',
+  settingsExportLabel: 'Export configuration',
+  settingsExportDescription:
+    'Export the API key, object storage (sync) configuration and other local settings as a JSON file that can be imported on another device. The file contains secrets, so keep it safe.',
+  settingsExportDone: 'Configuration exported (contains secrets, keep it safe)',
+  settingsExportFailed: 'Failed to export configuration: {message}',
+  settingsImportLabel: 'Import configuration',
+  settingsImportDescription:
+    'Restore the API key, object storage and other settings from a JSON file. This overwrites the current configuration.',
+  settingsImportDone: 'Configuration imported',
+  settingsImportFailed: 'Failed to import configuration: {message}',
+  settingsImportInvalid: 'Not a valid configuration file',
   deleteAllSessions: 'Delete all chats',
   deleteAllSessionsModalTitle: 'Once deleted, all chats will be cleared and cannot be recovered.',
   deleteAllSessionsModalDescription:

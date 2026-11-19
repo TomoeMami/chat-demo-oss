@@ -1,100 +1,90 @@
-# chat-demo
+# ChatDemoOSS
 
 English | [简体中文](README.zh-CN.md)
 
-A static chat demo powered by the DeepSeek API. No application backend is required: the browser connects directly to the configured API service.
-
-You can [try the app online](https://deepseek-ai.github.io/chat-demo/) or download the archive from [Releases](https://github.com/deepseek-ai/deepseek-chat-demo/releases), extract it, and double-click `index.html` to use it locally without installation or a build. Enter your API key in Settings before your first chat.
+A static chat page for the DeepSeek API: no backend of your own, the browser talks to DeepSeek directly and keeps conversations locally. Optionally sync history to **your own object storage** so phones, laptops and every other device show the same records.
 
 ## Getting started
 
-Install Node.js 22.12+ and pnpm, then run:
+1. Open the deployed page (for example `https://<your-user>.github.io/chat-demo-oss/`), or build locally and open `dist/index.html`.
+2. Open Settings (bottom-left) → Data, enter your API Key and confirm. The key is verified once.
+3. Close the dialog and start chatting.
 
-```sh
-git clone https://github.com/deepseek-ai/chat-demo.git
-cd chat-demo
-pnpm install
-pnpm dev
-```
+The API Key and settings stay in this browser's localStorage and are never sent anywhere except DeepSeek.
 
-Open http://localhost:8090.
+## Optional: sync across devices (object storage)
 
-To build the static site:
+Conversations live in the current browser by default. To share one history across all devices, sync it to your own object storage. S3-compatible services and Tencent Cloud COS are supported.
 
-```sh
-pnpm build
-```
+### 1. Prepare a bucket
 
-The output is written to `dist/`. Deploy it to a static web server or open `dist/index.html` directly. Opening the file directly requires browser support for storage on `file://` pages and an API service that permits their cross-origin requests.
+- **S3-compatible** (Cloudflare R2 / Backblaze B2 / AWS S3 / MinIO, ...): create a private bucket and note endpoint, bucket, region, access key and secret key.
+  - R2: endpoint looks like `https://<accountId>.r2.cloudflarestorage.com`, region `auto`
+  - B2: endpoint looks like `https://s3.<region>.backblazeb2.com`, region must match the endpoint, key id is the applicationKeyId
+  - AWS S3: endpoint looks like `https://s3.<region>.amazonaws.com`, region is the bucket's real region
+- **Tencent Cloud COS**: create a bucket whose name includes the APPID (`chat-1250000000`). Use the real region (`ap-guangzhou`). The endpoint may be left empty to derive `https://cos.<region>.myqcloud.com`. Credentials are the console's SecretId / SecretKey.
 
-## Features
+### 2. Allow CORS on the bucket (required)
 
-- Multiple conversations with automatic titles, renaming, and deletion; edit prompts, regenerate replies, and switch between message branches.
-- Streaming replies, deep thinking, smart search, link reading, and source citations; stop generation or continue eligible replies.
-- Upload, paste, or drag and drop attachments; use voice input and read replies aloud. A live audio spectrum appears in the first row of the input area while recording on mobile.
-- Markdown, syntax highlighting, KaTeX math, and Mermaid diagrams.
-- Simplified Chinese and English, light and dark themes, mobile layouts, location settings, and chat history import and export.
-- Optional history sync to your own S3-compatible object storage or Tencent Cloud COS, so conversations stay consistent across browsers and devices.
-- Configuration export/import: save the API key, object storage and UI settings as JSON and restore them on a new device in one step.
+The page talks to the bucket straight from the browser, so the bucket must allow cross-origin requests. Otherwise "Test connection" reports that the request was blocked by the browser.
 
-## Data and storage
+| Setting | Value |
+| --- | --- |
+| AllowedOrigins | origin of your deployed site; use `*` if you open `dist/index.html` from `file://` |
+| AllowedMethods | `GET`, `PUT`, `DELETE`, `HEAD` |
+| AllowedHeaders | `authorization`, `x-amz-date`, `x-amz-content-sha256` (or just `*`) |
+| ExposeHeaders | `ETag` (optional, helps troubleshooting) |
 
-Your API key and settings are stored in the browser's localStorage. Conversations and original attachments are stored in IndexedDB. Local data is isolated by browser profile and site origin. Sending messages, uploading attachments, and using speech features sends the relevant content to the configured API service.
+Where to configure:
 
-History import and export in Settings use ZIP archives. After confirmation and successful validation, importing replaces all local conversations and attachments. Exports include conversations and locally available original images, but exclude API keys, settings, and original non-image attachments. See the [history import/export documentation (Chinese)](src/services/chat/history/README.md) for the archive format and preservation details.
+- Cloudflare R2: dashboard → R2 → bucket → Settings → CORS Policy
+- Backblaze B2: bucket CORS rules (CLI: `b2 update-bucket --cors-rules ...`)
+- AWS S3: bucket → Permissions → Cross-origin resource sharing (CORS)
+- Tencent Cloud COS: console → bucket → Security Management → Cross-Origin Access (select GET/PUT/DELETE/HEAD, set Allow-Headers to `*`)
 
-### Configuration export and import
+### 3. Configure the page
 
-Settings → Data → Export configuration writes a JSON file containing the API key, the object storage (sync) configuration, and local settings such as language, theme and the DeepThink/Search switches. Pick it in "Import configuration" on a new device to restore everything at once; importing overwrites the current configuration.
+Settings → Sync:
 
-The export dialog accepts an optional **passphrase**:
+1. Turn on "Enable sync".
+2. Pick the storage type and fill in endpoint / bucket / region / access key / secret key / path prefix (default `chat-demo`; the prefix isolates multiple datasets inside one bucket).
+3. Enable "Sync attachment originals" if you want images too. Off by default: only text and attachment metadata are synced. When on, local originals are uploaded as well (20 MB per file limit).
+4. Click "Test connection", then "Sync now" — or simply wait: sync runs automatically when the page opens, when the window regains focus, when the network comes back, and after local writes.
 
-- **With a passphrase**: the file is encrypted with AES-GCM-256 using a PBKDF2(SHA-256, 310k iterations) key, named `chat-demo-config-<date>.enc.json`. It holds only salt, IV and ciphertext — no plain-text secrets. The same passphrase is required to import.
-- **Empty**: a plain-text file (API key and object storage credentials included) for convenience; keep it safe.
+Enter the **same configuration** on other devices to see the same history. The first sync of a large history is uploaded in batches (the pending counter counts down to 0); no repeated clicking is needed.
 
-The passphrase is never stored locally, uploaded, or included in the file. When WebCrypto is unavailable (non-secure context), encrypted export reports an error instead of silently falling back. Import detects encrypted files and asks for the passphrase.
+### Where the data goes
 
-### Optional cross-device sync
+`<prefix>/v1/devices/<device>/log/<seq>.json.gz` for conversation logs, `<prefix>/v1/blobs/<file-id>` for attachments. The payload is **gzip-compressed plain text, not encrypted**: use a private bucket and manage access control and lifecycle rules yourself. Deleting a conversation on one device removes it from the others.
 
-Settings → Sync can copy conversations to your own S3-compatible object storage (Cloudflare R2, Backblaze B2, AWS S3, MinIO, ...) or Tencent Cloud COS. Fill in the endpoint, bucket, region, access key, secret key, and an optional path prefix. The page must reach the bucket over HTTPS.
+## Import and export
 
-For Tencent Cloud COS pick the `Tencent Cloud COS` storage type: the bucket name must include the APPID (`chat-1250000000`), the region is the real region (`ap-guangzhou`), and the endpoint may be left empty to derive `https://cos.<region>.myqcloud.com`. COS buckets created after 2024-01-01 only support virtual-hosted-style addressing, which this adapter uses; access keys are the console's SecretId / SecretKey. Configure CORS on the bucket (Security → Cross-Origin Access) with methods `GET/PUT/DELETE/HEAD` and `Allow-Headers: *`.
+Settings → Data:
 
-- Remote layout: `<prefix>/v1/devices/<device-id>/log/<seq>.json.gz` (append-only log per browser tab) plus `<prefix>/v1/blobs/<file-id>` for attachment originals. Payloads are gzip-compressed JSON and are **not encrypted**; bucket access control and lifecycle rules are your responsibility.
-- Configure a CORS rule on the bucket allowing `GET`, `PUT`, `DELETE`, `HEAD` and the headers `authorization`, `x-amz-date`, `x-amz-content-sha256` from this site. `AllowedHeaders: ["*"]` is the simplest; `AllowedOrigins` must be `["*"]` if you also open the build from `file://`. Preflight is required because every request is SigV4-signed.
-- Every tab writes only its own log prefix. Other devices pull the logs they have not seen and merge them; deletions propagate as tombstones. Message ids are unioned, so appending on two devices keeps both branches.
-- Attachment originals are not synced by default. Enable "sync attachments" to also upload local originals (up to 20 MB per file, otherwise metadata only).
-- Your API key and other settings are not synced; they stay in this browser.
+- **Chat history (ZIP)**: "Export all chats" produces a ZIP with every conversation and locally available image originals (no API key). "Import chat history" **replaces** all local conversations and attachments with the ZIP contents.
+- **Configuration (JSON)**: "Export configuration" writes the API key, object storage configuration and UI settings into one JSON file. On a new device, "Import configuration" restores it in one step (it overwrites the local configuration and pulls history once when sync is usable). You can set a **passphrase**: the file is then encrypted with AES-GCM and contains only salt, IV and ciphertext, and the same passphrase is required to import. Without a passphrase the file is plain text — keep it safe.
 
-Settings → Data → Delete all chats clears all local conversations, original attachments, and unsent drafts after confirmation. It stops ongoing replies and returns to a new chat. Your API key and settings are preserved; files already uploaded to the API service are not deleted.
+## FAQ
+
+- **"Test connection" says the request was blocked by the browser**: CORS is not configured on the bucket; add the rule above.
+- **Authentication failed**: wrong access key / secret key, or the key lacks read/write permission on the bucket.
+- **Bucket not found or endpoint mismatch**: check that bucket and endpoint belong to the same region/account. COS bucket names must include the APPID.
+- **COS requires a real region**: `auto` (used by R2) is rejected; enter a region such as `ap-guangzhou`.
+- **Both devices edited the same conversation**: messages are merged per message id, so additions from both sides survive; the title and active branch follow the newer edit.
+- **Is the synced data encrypted?** No. Logs are gzip plain text protected by bucket access control; only the exported configuration JSON supports passphrase encryption.
 
 ## Development
 
-| Command       | Description                  |
-| ------------- | ---------------------------- |
-| `pnpm dev`    | Start the development server |
-| `pnpm build`  | Build into `dist/`           |
-| `pnpm type`   | Run TypeScript type checks   |
-| `pnpm lint`   | Lint with oxlint             |
-| `pnpm format` | Format with oxfmt            |
-
-[rspack.config.ts](rspack.config.ts) uses `https://api.deepseek.com` by default. Use `createConfig({ apiOrigin, devServer })` to customize the API origin and development server proxy.
-
-Chat uses `deepseek-flash` by default through Anthropic-compatible Messages / Files APIs. Speech features use ASR / TTS endpoints. Requests include extensions for search, link reading, titles, and `latest_reminder`, so the configured service must support the corresponding capabilities. Supported attachment formats are determined by server-side validation.
-
-```text
-src/
-  app/                 Application layout, themes, and global styles
-  components/          Chat, settings, Markdown, and other UI components
-  i18n/                English and Chinese translations
-  services/
-    api/               API requests, SSE, and protocol types
-    chat/              Conversations, message branches, storage, and history import/export
-    markdown/          Markdown parsing, syntax highlighting, and diagrams
-    speech/            Audio recording and read-aloud playback
-  utils/               Shared utilities
+```sh
+pnpm install
+pnpm dev    # http://localhost:8090
+pnpm build  # outputs to dist/, ready for static hosting
+pnpm type
+pnpm lint
 ```
+
+The build targets `https://api.deepseek.com` by default; change it via `createConfig({ apiOrigin })` in [rspack.config.ts](rspack.config.ts). Protocol and implementation notes: [docs/sync-design.zh-CN.md](docs/sync-design.zh-CN.md) (Chinese).
 
 ## License
 
-[MIT](LICENSE). The build copies the license to `dist/LICENSE`; include it when distributing the app. Third-party dependencies are subject to their own licenses.
+[MIT](LICENSE)

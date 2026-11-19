@@ -43,6 +43,13 @@ const toSyncError = (error: unknown): SyncError => {
 
 const safeCount = (): Promise<number> => db.countOutbox().catch(() => 0)
 
+/**
+ * 单次同步内最多跑多少轮「一批推送 / 一批拉取」。
+ * 单条日志最多 PUSH_BATCH 个会话（控制单条日志大小与失败半径），
+ * 但导入上千条历史时一次同步应把它们推完，而不是每次点击只推一批。
+ */
+const ROUND_LIMIT = 500
+
 let running: Promise<void> | null = null
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -168,32 +175,43 @@ const pull = async (
   const availableBlobs = await blobIndex(adapter, config)
   let applied = 0
   for (const [remoteDevice, seqs] of byDevice) {
-    const watermark = state.watermarks[remoteDevice] ?? 0
-    const pendingSeqs = seqs
-      .filter((seq) => seq > watermark)
-      .sort((a, b) => a - b)
-      .slice(0, PULL_BATCH)
-    for (const seq of pendingSeqs) {
-      const bytes = await adapter.get(logKey(remoteDevice, seq))
-      if (!bytes) {
-        // 日志已被远端清理：跳过并把水位推过去，避免每次重复请求
-        state.watermarks[remoteDevice] = seq
-        continue
-      }
-      const entry = decodeLogEntry(bytes)
-      if (entry.deviceId !== remoteDevice || entry.seq !== seq) {
-        throw new SyncError('protocol', 'Log entry does not match its object key')
-      }
-      const result = await applyEntry(adapter, entry, state, availableBlobs)
-      applied += result.applied
-      if (result.deferred) {
-        // 有会话正在生成/导入：不推进水位，等状态空闲后整条日志重放（put/del 重放是幂等的）
-        scheduleRetry()
+    const ordered = [...seqs].sort((a, b) => a - b)
+    let watermark = state.watermarks[remoteDevice] ?? 0
+    // 每轮最多应用 PULL_BATCH 条日志，循环到追平，避免首次同步只拉一部分
+    for (let round = 0; round < ROUND_LIMIT; round += 1) {
+      const pendingSeqs = ordered.filter((seq) => seq > watermark).slice(0, PULL_BATCH)
+      if (pendingSeqs.length === 0) {
         break
       }
-      state.watermarks[remoteDevice] = seq
-      // 每条日志后落一次状态：中途失败不必从头重放
-      await db.saveSyncState(state)
+      let deferred = false
+      for (const seq of pendingSeqs) {
+        const bytes = await adapter.get(logKey(remoteDevice, seq))
+        if (!bytes) {
+          // 日志已被远端清理：跳过并把水位推过去，避免每次重复请求
+          state.watermarks[remoteDevice] = seq
+          watermark = seq
+          continue
+        }
+        const entry = decodeLogEntry(bytes)
+        if (entry.deviceId !== remoteDevice || entry.seq !== seq) {
+          throw new SyncError('protocol', 'Log entry does not match its object key')
+        }
+        const result = await applyEntry(adapter, entry, state, availableBlobs)
+        applied += result.applied
+        if (result.deferred) {
+          // 有会话正在生成/导入：不推进水位，等状态空闲后整条日志重放（put/del 重放是幂等的）
+          scheduleRetry()
+          deferred = true
+          break
+        }
+        state.watermarks[remoteDevice] = seq
+        watermark = seq
+        // 每条日志后落一次状态：中途失败不必从头重放
+        await db.saveSyncState(state)
+      }
+      if (deferred) {
+        break
+      }
     }
   }
   return applied
@@ -308,12 +326,16 @@ const pullBlobs = async (
 }
 
 /** 把 outbox 与未推送的删除标记写成一条新日志 */
-const push = async (
+/**
+ * 推送一批：单条日志最多 PUSH_BATCH 个会话。
+ * progress 表示这一批是否真的减少了待推送项（全是被跳过/无可推时为 false）。
+ */
+const pushBatch = async (
   adapter: RemoteAdapter,
   config: SyncConfig,
   deviceId: string,
   state: SyncLocalState
-): Promise<{ pushed: number; blobs: number }> => {
+): Promise<{ pushed: number; blobs: number; progress: boolean }> => {
   const outbox = await db.loadOutbox()
   const tombstones = await db.loadTombstones()
   const changes: SyncSessionChange[] = []
@@ -372,6 +394,31 @@ const push = async (
   }
   await db.clearOutbox(included)
   await db.clearTombstones(pendingTombstones.map((tombstone) => tombstone.id))
+  return { pushed, blobs, progress: included.length > 0 || pendingTombstones.length > 0 }
+}
+
+/** 一次同步把 outbox 推空：导入上千条历史时不必反复点击 */
+const push = async (
+  adapter: RemoteAdapter,
+  config: SyncConfig,
+  deviceId: string,
+  state: SyncLocalState
+): Promise<{ pushed: number; blobs: number }> => {
+  let pushed = 0
+  let blobs = 0
+  for (let round = 0; round < ROUND_LIMIT; round += 1) {
+    const result = await pushBatch(adapter, config, deviceId, state)
+    pushed += result.pushed
+    blobs += result.blobs
+    // 让设置页的「待同步」计数跟着减少，用户能看到进度
+    setSyncStatus({ pending: await safeCount() })
+    if (!result.progress) {
+      break
+    }
+    if ((await db.countOutbox()) === 0) {
+      break
+    }
+  }
   return { pushed, blobs }
 }
 

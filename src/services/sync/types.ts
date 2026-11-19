@@ -61,7 +61,15 @@ export type SyncLogEntry = {
 }
 
 /** 同步错误分类；界面按类别给出不同提示（跨域、鉴权、网络等） */
-export type SyncErrorKind = 'config' | 'auth' | 'cors' | 'network' | 'server' | 'protocol'
+export type SyncErrorKind =
+  | 'config'
+  | 'auth'
+  | 'cors'
+  | 'network'
+  | 'server'
+  | 'protocol'
+  /** 本地数据库读写失败（连接被浏览器关闭、存储被清理或损坏） */
+  | 'storage'
 
 export class SyncError extends Error {
   constructor(

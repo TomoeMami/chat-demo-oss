@@ -34,11 +34,59 @@ const LOG_KEY_PATTERN = /([^/]+)\/log\/(\d+)\.json\.gz$/
 const withoutKey = <T>(record: Record<string, T>, key: string): Record<string, T> =>
   Object.fromEntries(Object.entries(record).filter(([id]) => id !== key))
 
+/** IndexedDB 连接被关闭 / 存储异常时浏览器抛出的错误名 */
+const STORAGE_ERROR_NAMES = new Set([
+  'InvalidStateError',
+  'DatabaseClosedError',
+  'UnknownError',
+  'QuotaExceededError',
+  'DataError',
+  'VersionError',
+  'NotFoundError',
+  'AbortError',
+  'TransactionInactiveError',
+])
+
+/** 连接已被浏览器关闭：重连后重试通常就能成功（标签页休眠、往返缓存恢复等） */
+const isClosedConnectionError = (error: unknown): boolean =>
+  error instanceof DOMException &&
+  (error.name === 'InvalidStateError' || error.name === 'DatabaseClosedError')
+
 const toSyncError = (error: unknown): SyncError => {
   if (error instanceof SyncError) {
     return error
   }
+  const name = error instanceof Error ? error.name : ''
+  if (name !== '' && STORAGE_ERROR_NAMES.has(name)) {
+    return new SyncError('storage', `${name}: ${error instanceof Error ? error.message : ''}`)
+  }
   return new SyncError('network', error instanceof Error ? error.message : String(error))
+}
+
+/** 读取同步状态；连接被浏览器关闭时重连并重试一次 */
+const loadState = async (): Promise<SyncLocalState> => {
+  try {
+    return await db.loadSyncState()
+  } catch (error) {
+    if (!isClosedConnectionError(error)) {
+      throw error
+    }
+    db.resetConnection()
+    return db.loadSyncState()
+  }
+}
+
+/** 保存同步状态；同样对「连接已关闭」做一次重连重试 */
+const saveState = async (state: SyncLocalState): Promise<void> => {
+  try {
+    await db.saveSyncState(state)
+  } catch (error) {
+    if (!isClosedConnectionError(error)) {
+      throw error
+    }
+    db.resetConnection()
+    await db.saveSyncState(state)
+  }
 }
 
 const safeCount = (): Promise<number> => db.countOutbox().catch(() => 0)
@@ -99,28 +147,24 @@ export const syncNow = (): Promise<void> => {
 }
 
 const runSync = async (): Promise<void> => {
-  const config = readSyncConfig()
-  if (!config.enabled) {
-    setSyncStatus({ phase: 'disabled', pending: await safeCount() })
-    return
-  }
-  if (!isSyncConfigured(config)) {
-    setSyncStatus({
-      phase: 'error',
-      lastError: { kind: 'config', message: 'Sync is not configured' },
-      pending: await safeCount(),
-    })
-    throw new SyncError('config', 'Sync is not configured')
-  }
-  const adapter = createAdapter(config)
-  const deviceId = getDeviceId()
-  const state = await db.loadSyncState()
-  setSyncStatus({ phase: 'pulling', lastError: null, pending: await safeCount() })
   try {
+    const config = readSyncConfig()
+    if (!config.enabled) {
+      setSyncStatus({ phase: 'disabled', pending: await safeCount() })
+      return
+    }
+    if (!isSyncConfigured(config)) {
+      throw new SyncError('config', 'Sync is not configured')
+    }
+    const adapter = createAdapter(config)
+    const deviceId = getDeviceId()
+    // 先读本地同步状态：浏览器可能已经关掉 IndexedDB 连接，loadState 内部会重连重试
+    const state = await loadState()
+    setSyncStatus({ phase: 'pulling', lastError: null, pending: await safeCount() })
     const pulled = await pull(adapter, config, deviceId, state)
     setSyncStatus({ phase: 'pushing', pending: await safeCount() })
     const { pushed, blobs } = await push(adapter, config, deviceId, state)
-    await db.saveSyncState(state)
+    await saveState(state)
     setSyncStatus({
       phase: 'idle',
       lastSyncedAt: Date.now(),
@@ -129,8 +173,8 @@ const runSync = async (): Promise<void> => {
       lastResult: { pushed, pulled, blobs },
     })
   } catch (error) {
+    // 任何异常都归一化为 SyncError，避免界面只能显示「测试连接失败」这种兜底文案
     const syncError = toSyncError(error)
-    await db.saveSyncState(state).catch(db.reportStorageError('save sync state'))
     setSyncStatus({
       phase: 'error',
       lastError: { kind: syncError.kind, message: syncError.message, status: syncError.status },
@@ -207,7 +251,7 @@ const pull = async (
         state.watermarks[remoteDevice] = seq
         watermark = seq
         // 每条日志后落一次状态：中途失败不必从头重放
-        await db.saveSyncState(state)
+        await saveState(state)
       }
       if (deferred) {
         break
@@ -390,7 +434,7 @@ const pushBatch = async (
     }
     pushed = digests.size
     blobs = config.syncAttachments ? await pushBlobs(adapter, changes, state) : 0
-    await db.saveSyncState(state)
+    await saveState(state)
   }
   await db.clearOutbox(included)
   await db.clearTombstones(pendingTombstones.map((tombstone) => tombstone.id))

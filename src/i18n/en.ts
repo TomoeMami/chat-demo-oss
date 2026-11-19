@@ -148,6 +148,9 @@ export const en = {
   syncErrorServer: 'The storage service returned an error. Please try again later.',
   syncErrorProtocol:
     'Unexpected response format. Make sure the Endpoint is an S3-compatible service.',
+  syncErrorStorage:
+    "Local database access failed: close other tabs of this site and reload. If it still fails, clear this site's data in the browser settings; history can be pulled back from object storage.",
+  syncErrorUnknown: 'Sync failed: {message}',
   syncCorsHint:
     'The bucket CORS rules must allow GET, PUT, DELETE, and OPTIONS requests from this site.',
   avatarMenuSettingsDialogThemeItemLabel: 'Theme',

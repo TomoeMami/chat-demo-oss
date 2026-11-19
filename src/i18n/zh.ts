@@ -138,6 +138,9 @@ export const zh = {
   syncErrorNetwork: '网络异常，请检查网络连接或 Endpoint 地址',
   syncErrorServer: '存储服务返回错误，请稍后重试',
   syncErrorProtocol: '响应格式异常，请确认 Endpoint 是 S3 兼容服务',
+  syncErrorStorage:
+    '本地数据库读写失败：请关闭本站点的其他标签页后刷新重试（仍失败时可在浏览器设置里清理本站点数据，历史可再从对象存储拉回）',
+  syncErrorUnknown: '同步失败：{message}',
   syncCorsHint: '需要在存储桶的 CORS 规则中允许本站点的 GET、PUT、DELETE 与 OPTIONS 请求。',
   avatarMenuSettingsDialogThemeItemLabel: '主题',
   avatarMenuSettingsDialogThemeSelectLightOption: '浅色',

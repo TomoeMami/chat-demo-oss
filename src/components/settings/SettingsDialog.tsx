@@ -172,10 +172,21 @@ const syncErrorKeys: Record<SyncErrorKind, TranslationKey> = {
   network: 'syncErrorNetwork',
   server: 'syncErrorServer',
   protocol: 'syncErrorProtocol',
+  storage: 'syncErrorStorage',
 }
 
-const syncErrorMessageKey = (error: unknown): TranslationKey =>
-  error instanceof SyncError ? syncErrorKeys[error.kind] : 'syncTestFailed'
+/**
+ * 同步失败时给用户看的文案。
+ * SyncError 按类型映射；其他异常（例如浏览器抛出的 DOMException）带上原始信息，
+ * 避免只显示「测试连接失败」这种无法排查的兜底文案。
+ */
+const syncErrorMessage = (error: unknown): TranslationMessage =>
+  error instanceof SyncError
+    ? { key: syncErrorKeys[error.kind] }
+    : {
+        key: 'syncErrorUnknown',
+        params: { message: error instanceof Error ? error.message : String(error) },
+      }
 
 /** 状态区只展示进行中与空闲的文案；出错时改由下方错误提示说明。 */
 const syncPhaseKeys: Record<SyncPhase, TranslationKey | null> = {
@@ -221,7 +232,7 @@ const SyncSetting = () => {
       await testSyncConfig(readSyncConfig())
       showToast({ key: 'syncTestOk' })
     } catch (error) {
-      showToast({ key: syncErrorMessageKey(error), type: 'error' })
+      showToast({ ...syncErrorMessage(error), type: 'error' })
     } finally {
       setTesting(false)
     }
@@ -235,7 +246,7 @@ const SyncSetting = () => {
     try {
       await syncNow()
     } catch (error) {
-      showToast({ key: syncErrorMessageKey(error), type: 'error' })
+      showToast({ ...syncErrorMessage(error), type: 'error' })
     } finally {
       setSyncing(false)
     }
@@ -418,6 +429,9 @@ const SyncSetting = () => {
               {t(syncErrorKeys[status.lastError.kind])}
               {status.lastError.kind === 'cors' ? (
                 <div className={styles.syncErrorDetail}>{t('syncCorsHint')}</div>
+              ) : null}
+              {status.lastError.kind === 'storage' ? (
+                <div className={styles.syncErrorDetail}>{status.lastError.message}</div>
               ) : null}
             </div>
           ) : null}

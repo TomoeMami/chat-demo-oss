@@ -72,6 +72,8 @@ Settings → Data:
 - **COS requires a real region**: `auto` (used by R2) is rejected; enter a region such as `ap-guangzhou`.
 - **Both devices edited the same conversation**: messages are merged per message id, so additions from both sides survive; the title and active branch follow the newer edit.
 - **Is the synced data encrypted?** No. Logs are gzip plain text protected by bucket access control; only the exported configuration JSON supports passphrase encryption.
+- **"Sync now" reports a local database error**: the browser closed the page's IndexedDB connection (common after tab sleep or a restore from the back/forward cache). Close other tabs of this site, reload and retry; if it persists, clear this site's data in the browser settings — history can be pulled back from object storage.
+- **The page stays on "Loading..."**: another tab of this site may still hold an older version of the local database. Close it and reload.
 
 ## Development
 

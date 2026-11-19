@@ -101,6 +101,11 @@ const getDB = () =>
         db.close()
         dbPromise = null
       })
+      // 浏览器也可能自己关闭连接（标签页休眠、从往返缓存恢复、存储被清理）。
+      // 这里只清掉缓存，让下一次操作重新打开；正在进行的操作由调用方重试。
+      db.addEventListener('close', () => {
+        dbPromise = null
+      })
       return db
     })
     .catch((error: unknown) => {
@@ -108,6 +113,11 @@ const getDB = () =>
       dbPromise = null
       throw error
     }))
+
+/** 丢弃缓存的连接，下次操作重新打开；用于浏览器关闭连接后的重试 */
+export const resetConnection = (): void => {
+  dbPromise = null
+}
 
 export const loadSessionSummaries = async (): Promise<SessionSummary[]> =>
   (await (await getDB()).getAll('sessionSummaries')).map(toSessionSummary)
